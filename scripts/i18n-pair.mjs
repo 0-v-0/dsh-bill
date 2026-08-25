@@ -13,8 +13,8 @@
  * (`README.i18n.yaml`), restated here so this repo needs no monorepo tooling.
  *
  * Hashes are git blob hashes computed directly — `sha1("blob <len>\0" + bytes)`
- * — so they match `git hash-object` and can be checked against a diff by hand,
- * without this script needing git to exist.
+ * over the LF-normalised text — so they match `git hash-object` and can be
+ * checked against a diff by hand, without this script needing git to exist.
  *
  *   node scripts/i18n-pair.mjs           # verify (exit 1 on drift)
  *   node scripts/i18n-pair.mjs --write   # re-record after translating
@@ -35,9 +35,17 @@ const HEADER = `# Bilingual-pair consistency record: the git blob hash of each s
 #   npm run docs:pair -- --write
 `
 
-/** git's blob hash of a file, without needing git. */
+/**
+ * git's blob hash of a file, without needing git.
+ *
+ * Normalised to LF first, which is the form git hashes a text blob in. A
+ * Windows checkout under `core.autocrlf=true` has CRLF on disk, so hashing
+ * the bytes as they sit there disagrees with a record written anywhere else,
+ * and reports the pair as drifted on a tree nobody touched.
+ */
 function blobHash(file) {
-  const bytes = readFileSync(join(root, file))
+  const text = readFileSync(join(root, file), 'utf8').replace(/\r\n/g, '\n')
+  const bytes = Buffer.from(text, 'utf8')
   return createHash('sha1')
     .update('blob ' + bytes.length + '\0')
     .update(bytes)

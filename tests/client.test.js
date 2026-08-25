@@ -10,7 +10,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const clientPath = join(here, '..', 'lib', 'client.js')
@@ -54,7 +54,8 @@ globalThis.window = {
     },
   },
 }
-await import(clientPath)
+// A bare Windows path ('E:\...') is not a URL the ESM loader accepts.
+await import(pathToFileURL(clientPath).href)
 assert(exported !== null, 'the module loader factory ran')
 assert(typeof exported.apply === 'function', 'exports apply()')
 assert(Array.isArray(exported.inject) && exported.inject.includes('slots'), 'injects the slots service')
