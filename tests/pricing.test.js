@@ -58,6 +58,22 @@ assert(peakStateFor('gpt-5', inPeak) === null, 'flat-priced model has no peak st
 assert(peakStateFor('totally-made-up-model-xyz', inPeak) === null, 'unknown model has no peak state')
 assert(peak.peak === 'peak' && off.peak === 'offpeak', 'priced records carry their peak state')
 
+// A peak window is not only its hours: since 2026-08-23 DeepSeek bills the
+// off-peak rate around the clock at weekends. llm-pricing prices that
+// correctly either way, so the tag is the only thing that can drift out of
+// step with the bill — assert the two agree rather than the tag alone.
+console.log('weekends (off-peak around the clock since 2026-08-23)')
+const satBefore = Date.UTC(2026, 7, 22, 2) // Saturday, weekday-only rule not yet in force
+const satAfter = Date.UTC(2026, 7, 29, 2) // Saturday, inside 01-04 UTC
+const sunAfter = Date.UTC(2026, 7, 30, 2) // Sunday, inside 01-04 UTC
+const perM = (time) => priceRecord(rec('deepseek-v4-flash', time, { inputTokens: 1e6 }))
+assert(peakStateFor('deepseek-v4-flash', satBefore) === 'peak', 'a peak-hour Saturday before the change is still peak')
+assert(Math.abs(perM(satBefore).usd - 0.44) < 1e-6, '... and is billed at the peak rate')
+assert(peakStateFor('deepseek-v4-flash', satAfter) === 'offpeak', 'a peak-hour Saturday after the change is off-peak')
+assert(Math.abs(perM(satAfter).usd - 0.22) < 1e-6, '... and is billed at the off-peak rate')
+assert(peakStateFor('deepseek-v4-flash', sunAfter) === 'offpeak', 'a peak-hour Sunday after the change is off-peak')
+assert(Math.abs(perM(sunAfter).usd - 0.22) < 1e-6, '... and is billed at the off-peak rate')
+
 console.log('native currency')
 assert(currencyFor('deepseek-v4-flash') === 'CNY', 'deepseek prices in CNY')
 assert(currencyFor('gpt-5') === 'USD', 'gpt-5 prices in USD')
