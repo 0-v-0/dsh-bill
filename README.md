@@ -83,7 +83,7 @@ The session log holds token counts and model routes but **not the request bodies
 
 ## Configuration
 
-The budget, its currency, and which of the four surfaces are shown are all set on the **Cost** page in settings, and stored in `$DSH_HOME/dsh-bill/prefs.json`. (Not in the harness's own settings document: its API proxy serves a fixed allowlist of namespaces to the browser, so a plugin's namespace is never readable or writable from there.)
+The budget, its currency, the display currency shared by every figure, and which of the four surfaces are shown are all set on the **Cost** page in settings, and stored in `$DSH_HOME/dsh-bill/prefs.json`. The two currencies are separate settings: the budget's is the promise ("¥100 a month") and does not follow the display. (Not in the harness's own settings document: its API proxy serves a fixed allowlist of namespaces to the browser, so a plugin's namespace is never readable or writable from there.)
 
 `maxRecords` (the in-memory ring buffer size, default 20000) and `priceOverrides` are plugin config and are validated at startup — a mistyped field is reported by name rather than leaving the report quietly empty. `~/.dsh/profiles/web/cordis.patch.yml` is only needed when you want to override a price:
 
