@@ -67,6 +67,11 @@ assert(shellProgram('{"command":"FOO=1 pnpm test"}') === 'pnpm', 'env prefix ski
 assert(shellProgram('{"command":"/usr/bin/node x.js"}') === 'node', 'path stripped')
 assert(shellProgram('not json') === null, 'unparseable command falls back to the tool name')
 
+console.log('PowerShell assignment does not key to a variable name')
+assert(shellProgram('{"command":"$env:PATH = x"}') === null, 'a $env assignment has no program (no PATH/Path case split)')
+assert(shellProgram('{"command":"$env:Path = y"}') === null, 'the case variant $env:Path also returns null')
+assert(shellProgram('{"command":"$base = Get-Item"}') === null, 'a $var assignment has no program')
+
 console.log('cost attribution')
 const rates = ratesFor('deepseek-v4-pro', Date.UTC(2026, 7, 15))
 const usage = { inputTokens: 2000, cacheReadTokens: 6000, cacheWriteTokens: 0, outputTokens: 500 }

@@ -108,6 +108,7 @@ function fakeSessionQuery(sessions, { hang = false, rejectIds = [] } = {}) {
       const session = sessions.find((s) => s.id === id)
       return {
         events: session?.events ?? [],
+        inheritedEventCount: session?.inheritedEventCount,
         [Symbol.dispose]() {},
       }
     },
@@ -116,7 +117,7 @@ function fakeSessionQuery(sessions, { hang = false, rejectIds = [] } = {}) {
 
 /** Boot one plugin instance against the shared temp HOME. */
 function boot(config, sessionQuery) {
-  const services = { sessionQuery, webServer: { register: () => {} } }
+  const services = { sessionQuery, webServer: { register(route) { this.handler = route && route.handler } } }
   const ctx = {
     ...services,
     effect: (fn) => fn(),
@@ -126,6 +127,22 @@ function boot(config, sessionQuery) {
   }
   plugin.apply(ctx, config)
   return ctx
+}
+
+/** Invoke the plugin HTTP dispatch in-process (no real socket in the test). */
+function mockReq(payload) {
+  const text = JSON.stringify(payload)
+  return {
+    on(ev, cb) { if (ev === 'data') cb(text); else if (ev === 'end') cb() },
+    destroy() {},
+  }
+}
+async function callApi(ctx, payload) {
+  const web = ctx.get('webServer')
+  let result
+  const res = { writeHead() {}, end(text) { result = JSON.parse(text) } }
+  await web.handler(mockReq(payload), res)
+  return result
 }
 
 const readRecords = () => {
@@ -233,6 +250,131 @@ console.log('prefs drive the knobs')
   await sleep(500)
   assert(sq.listings.count === 0, 'prefs backfillTimeoutMs: 0 disables the import even with a positive config')
   assert(readRecords().length === before, 'a prefs-disabled pass imports nothing')
+}
+
+// ── eviction safety: a fully-evicted session is not re-imported ──────────────
+console.log('evicted session not re-imported')
+{
+  // `bySession` indexes only the live ring, so once a session's every record
+  // is evicted into the rollup it disappears from the guard. Without the
+  // knownSessions marker the next boot's backfill would pull the same calls
+  // in again and fold them a second time — doubling the rollup's totals.
+  // sess-evict has the earliest time, so with maxRecords:5 and 8 later
+  // sessions it is the first of four records folded into the rollup.
+  const HOME3 = path.join(os.tmpdir(), 'dsh-bill-backfill-test-evict')
+  fs.rmSync(HOME3, { recursive: true, force: true })
+  process.env.DSH_HOME = HOME3
+  const rollupPath = () => path.join(HOME3, 'dsh-bill', 'rollup.json')
+  const readRollup = () => fs.existsSync(rollupPath()) ? JSON.parse(fs.readFileSync(rollupPath(), 'utf8')) : {}
+
+  const early = [
+    { type: 'request/header', seq: 0, time: 100, data: { header: { config: { model: 'm', provider: 'p' } } } },
+    { type: 'assistant/message', seq: 1, time: 100, data: { turn: 0, step: 0, usage: { inputTokens: 10, outputTokens: 20, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 }, message: { source: { provider: 'p', model: 'm' } } } },
+  ]
+  const later = () => [
+    { type: 'request/header', seq: 0, time: 200, data: { header: { config: { model: 'm', provider: 'p' } } } },
+    { type: 'assistant/message', seq: 1, time: 200, data: { turn: 0, step: 0, usage: { inputTokens: 10, outputTokens: 20, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 }, message: { source: { provider: 'p', model: 'm' } } } },
+  ]
+  const sessions = [{ id: 'sess-evict', events: early }]
+  for (let i = 0; i < 8; i++) sessions.push({ id: `sess-fill-${i}`, events: later() })
+
+  const sq = fakeSessionQuery(sessions)
+  boot({ maxRecords: 5 }, sq)
+  await waitFor(() => (sq.listings.count >= 1 ? true : null))
+  await waitFor(() => (readRollup().calls === 4 ? true : null), 5000)
+  assert(readRollup().calls === 4, 'four calls folded into the rollup on the first boot')
+  assert(Array.isArray(readRollup().knownSessions) && readRollup().knownSessions.includes('sess-evict'),
+    'the evicted session is recorded in rollup.knownSessions')
+  const foldedBefore = readRollup().calls
+
+  // Reboot: bySession holds only the five surviving fill sessions, so
+  // sess-evict (and the three evicted fill sessions) are invisible to the
+  // `bySession.has(id)` guard. Only knownSessions can stop a re-import.
+  const sq2 = fakeSessionQuery(sessions)
+  boot({ maxRecords: 5 }, sq2)
+  await waitFor(() => (sq2.listings.count >= 1 ? true : null))
+  await sleep(600)
+  assert(readRollup().calls === foldedBefore,
+    `the rollup did not double-count after reboot (${foldedBefore} → ${readRollup().calls})`)
+}
+
+// ── fork: the inherited prefix is not re-billed under the child ─────────────
+console.log('forked session inherits the parent prefix without double-billing')
+{
+  // A forked (seeded) session opens with the parent's events as an inherited
+  // prefix. The parent's backfill already bills those calls; importing them
+  // again here would double-count. Only the child's OWN events (after the
+  // inheritedEventCount cut) should produce records.
+  const HOME4 = path.join(os.tmpdir(), 'dsh-bill-backfill-test-fork')
+  fs.rmSync(HOME4, { recursive: true, force: true })
+  process.env.DSH_HOME = HOME4
+  const forkFile = path.join(HOME4, 'dsh-bill', 'records.jsonl')
+  const readFork = () => fs.existsSync(forkFile)
+    ? fs.readFileSync(forkFile, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l))
+    : []
+
+  const parentUsage = { inputTokens: 111, outputTokens: 11, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 }
+  const childUsage = { inputTokens: 222, outputTokens: 22, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 }
+  const header = (time) => ({ type: 'request/header', seq: 0, time, data: { header: { config: { model: 'm', provider: 'p' } } } })
+  const message = (time, turn, usage) => ({ type: 'assistant/message', seq: 1, time, data: { turn, step: 0, usage, message: { source: { provider: 'p', model: 'm' } } } })
+  const sessions = [{
+    id: 'sess-fork',
+    // The first two events are the parent's inherited prefix (turn 5); the
+    // child's own events follow (turn 6). The cut is at index 2.
+    inheritedEventCount: 2,
+    events: [header(100), message(100, 5, parentUsage), header(200), message(200, 6, childUsage)],
+  }]
+  const sq = fakeSessionQuery(sessions)
+  boot({ maxRecords: 10 }, sq)
+  const records = await waitFor(() => {
+    const r = readFork().filter((x) => x.sessionId === 'sess-fork')
+    return r.length === 1 ? r : null
+  })
+  const fork = records[0]
+  assert(fork.inputTokens === childUsage.inputTokens && fork.outputTokens === childUsage.outputTokens,
+    'only the child OWN call is imported (inherited parent call dropped)')
+  assert(!readFork().some((r) => r.sessionId === 'sess-fork' && r.inputTokens === parentUsage.inputTokens),
+    'the inherited parent call is not re-billed under the child')
+}
+
+// ── rebuild: wipe + re-import from session logs ──────────────────────────────
+console.log('rebuild from logs wipes and re-imports cleanly')
+{
+  const HOME5 = path.join(os.tmpdir(), 'dsh-bill-backfill-test-rebuild')
+  fs.rmSync(HOME5, { recursive: true, force: true })
+  process.env.DSH_HOME = HOME5
+  const rbFile = path.join(HOME5, 'dsh-bill', 'records.jsonl')
+  const readRb = () => fs.existsSync(rbFile)
+    ? fs.readFileSync(rbFile, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l))
+    : []
+  const sessions = [
+    { id: 'sess-r1', events: USAGE_EVENTS },
+    { id: 'sess-r2', events: USAGE_EVENTS },
+  ]
+  const sq = fakeSessionQuery(sessions)
+  const ctx = boot({ maxRecords: 10 }, sq)
+  // Initial import: two sessions, two records.
+  await waitFor(() => readRb().length === 2 ? readRb() : null)
+  // Pollute the file to mimic the inherited-prefix double-count the rebuild
+  // exists to clean: append a bogus duplicate straight to the file, bypassing
+  // the plugin so its in-memory ring never learns of it.
+  fs.appendFileSync(rbFile, JSON.stringify({
+    sessionId: 'sess-r1', time: 1000, model: 'm-src', provider: 'p-src',
+    inputTokens: 10, outputTokens: 20, cacheReadTokens: 2, cacheWriteTokens: 1,
+    reasoningTokens: 3, purpose: 'agent', source: 'log', usd: null, seq: 999,
+  }) + '\n')
+  assert(readRb().length === 3, 'pollution: a bogus duplicate was appended')
+  // Rebuild: wipes the ring + file, re-imports only what the logs hold.
+  // The modal's timeout + concurrency flow through as body params.
+  const res = await callApi(ctx, { action: 'rebuild', timeoutMs: 60000, concurrency: 2 })
+  assert(res && res.ok, 'rebuild action with timeout/concurrency params returned ok')
+  await waitFor(() => readRb().length === 2 ? readRb() : null)
+  const after = readRb()
+  assert(after.length === 2, 'rebuild re-imported exactly the two sessions (bogus record gone)')
+  assert(!after.some((r) => r.seq === 999), 'the bogus duplicate did not survive the rebuild')
+  const dir = path.join(HOME5, 'dsh-bill')
+  const baks = fs.readdirSync(dir).filter((f) => f.includes('.bak-'))
+  assert(baks.some((f) => f.startsWith('records.jsonl.bak-')), 'records.jsonl was backed up before wiping')
 }
 
 if (failed) {
