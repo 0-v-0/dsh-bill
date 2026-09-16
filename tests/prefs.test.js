@@ -59,6 +59,8 @@ await new Promise((r) => setTimeout(r, 200))
 console.log('the default is CNY')
 const initial = await ask({ action: 'prefs' })
 assert(initial.ok && initial.prefs.currency === 'CNY', 'currency defaults to CNY (got ' + initial.prefs.currency + ')')
+assert(initial.prefs.maxRecords === 20000, 'maxRecords defaults to 20000 (got ' + initial.prefs.maxRecords + ')')
+assert(initial.prefs.backfillTimeoutMs === 60000, 'backfillTimeoutMs defaults to 60000 (got ' + initial.prefs.backfillTimeoutMs + ')')
 
 console.log('choosing a currency stores it')
 const set = await ask({ action: 'prefs-set', patch: { currency: 'EUR' } })
@@ -85,6 +87,18 @@ assert(swapped.prefs.budgetCurrency === 'CNY', 'changing the display does not re
 console.log('a stored document is coerced, not trusted')
 const junk = await ask({ action: 'prefs-set', patch: { currency: '' } })
 assert(junk.prefs.currency === 'CNY', 'an empty currency falls back to CNY (got ' + JSON.stringify(junk.prefs.currency) + ')')
+
+console.log('sizing knobs persist and clamp')
+const sized = await ask({ action: 'prefs-set', patch: { maxRecords: 42 } })
+assert(sized.prefs.maxRecords === 42, 'maxRecords write is acknowledged (got ' + sized.prefs.maxRecords + ')')
+const clampedLow = await ask({ action: 'prefs-set', patch: { maxRecords: 5 } })
+assert(clampedLow.prefs.maxRecords === 10, 'maxRecords below 10 clamps to 10 (got ' + clampedLow.prefs.maxRecords + ')')
+const clampedHigh = await ask({ action: 'prefs-set', patch: { maxRecords: 5000000 } })
+assert(clampedHigh.prefs.maxRecords === 1000000, 'maxRecords above 1,000,000 clamps to 1,000,000 (got ' + clampedHigh.prefs.maxRecords + ')')
+const off = await ask({ action: 'prefs-set', patch: { backfillTimeoutMs: 0 } })
+assert(off.prefs.backfillTimeoutMs === 0, 'backfillTimeoutMs: 0 is stored as disabled (got ' + off.prefs.backfillTimeoutMs + ')')
+const neg = await ask({ action: 'prefs-set', patch: { backfillTimeoutMs: -5 } })
+assert(neg.prefs.backfillTimeoutMs === 0, 'a negative budget clamps to 0 (got ' + neg.prefs.backfillTimeoutMs + ')')
 
 fs.rmSync(HOME, { recursive: true, force: true })
 
