@@ -44,13 +44,22 @@ console.log('config validation')
   const def = Config['~standard'].validate(undefined)
   assert(def.value?.maxRecords === 20000, 'maxRecords default preserved')
   assert(def.value?.backfillTimeoutMs === 60000, 'backfillTimeoutMs defaults to 60000')
-  const ok = Config['~standard'].validate({ backfillTimeoutMs: 12345 })
-  assert(!ok.issues && ok.value.backfillTimeoutMs === 12345, 'backfillTimeoutMs accepted as a positive integer')
-  for (const bad of [-1, 0, 1.5, 'soon', NaN]) {
+  const ok = Config['~standard'].validate({ backfillTimeoutMs: 12345, maxRecords: 50000 })
+  assert(!ok.issues && ok.value.backfillTimeoutMs === 12345 && ok.value.maxRecords === 50000, 'backfillTimeoutMs and maxRecords accepted in range')
+  const zero = Config['~standard'].validate({ backfillTimeoutMs: 0 })
+  assert(!zero.issues && zero.value.backfillTimeoutMs === 0, 'backfillTimeoutMs: 0 disables the import')
+  for (const bad of [-1, 1.5, 'soon', NaN]) {
     const r = Config['~standard'].validate({ backfillTimeoutMs: bad })
     assert(
       r.issues?.length === 1 && r.issues[0].path?.[0] === 'backfillTimeoutMs',
       `backfillTimeoutMs rejected: ${String(bad)}`,
+    )
+  }
+  for (const bad of [0, 9, 1000001, 1.5, 'soon', NaN]) {
+    const r = Config['~standard'].validate({ maxRecords: bad })
+    assert(
+      r.issues?.length === 1 && r.issues[0].path?.[0] === 'maxRecords',
+      `maxRecords rejected outside 10..1000000: ${String(bad)}`,
     )
   }
 }
@@ -201,6 +210,29 @@ console.log('missing observeSession')
   await sleep(500)
   assert(sq.listings.count === 0, 'a session-query without observeSession is never listed')
   assert(readRecords().length === before, 'a session-query without observeSession skips the import')
+}
+
+// ── disabled via 0: the import is off entirely, not just bounded ────────────
+console.log('disabled via 0')
+{
+  const sq = fakeSessionQuery([{ id: 'sess-a', events: USAGE_EVENTS }])
+  const before = readRecords().length
+  boot({ backfillTimeoutMs: 0 }, sq)
+  await sleep(500)
+  assert(sq.listings.count === 0, 'a zero budget never lists the artifact tree')
+  assert(readRecords().length === before, 'a zero budget imports nothing')
+}
+
+// ── prefs drive the knobs: a settings-page value overrides the config ───────
+console.log('prefs drive the knobs')
+{
+  const before = readRecords().length
+  fs.writeFileSync(path.join(HOME, 'dsh-bill', 'prefs.json'), JSON.stringify({ backfillTimeoutMs: 0 }))
+  const sq = fakeSessionQuery([{ id: 'sess-pref', events: USAGE_EVENTS }])
+  boot({ backfillTimeoutMs: 60000 }, sq)
+  await sleep(500)
+  assert(sq.listings.count === 0, 'prefs backfillTimeoutMs: 0 disables the import even with a positive config')
+  assert(readRecords().length === before, 'a prefs-disabled pass imports nothing')
 }
 
 if (failed) {
