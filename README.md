@@ -24,7 +24,7 @@ Restart `dsh web` to pick it up.
 - **Report** — a **Cost** tab in the conversation, beside Chat and Trajectory: total, tokens, cache hit, peak share, monthly forecast, account balance; broken down by model, by session, and by purpose (including loop overhead such as context compaction); a daily trend and a weekday × hour heatmap.
 - **Budget** — a daily / monthly / all-time limit that turns amber past 80% and red when you go over.
 - **Multi-currency** — live rates for ~166 currencies; each model's base rate is shown in the currency its vendor prices it in.
-- **Agent tool** — `bill_stats`, so the model can answer questions about spend directly.
+- **Agent tool** — `bill_stats`, so the model can answer questions about spend directly. `agentTool: false` in the plugin config leaves it unregistered, for anyone who never asks the model about spend and would rather not pay its schema on every request.
 - English and Chinese follow the DSH language setting; history from before the install is backfilled from the session log.
 
 ## How it differs from similar plugins
@@ -85,7 +85,7 @@ The session log holds token counts and model routes but **not the request bodies
 
 The budget, its currency, the display currency shared by every figure, and which of the four surfaces are shown are all set on the **Cost** page in settings, and stored in `$DSH_HOME/dsh-bill/prefs.json`. The two currencies are separate settings: the budget's is the promise ("¥100 a month") and does not follow the display. (Not in the harness's own settings document: its API proxy serves a fixed allowlist of namespaces to the browser, so a plugin's namespace is never readable or writable from there.)
 
-`maxRecords` (the in-memory ring buffer size, default 20000) and `priceOverrides` are plugin config and are validated at startup — a mistyped field is reported by name rather than leaving the report quietly empty. `~/.dsh/profiles/web/cordis.patch.yml` is only needed when you want to override a price:
+`maxRecords` (the in-memory ring buffer size, default 20000), `agentTool` (register `bill_stats`, default `true`) and `priceOverrides` are plugin config and are validated at startup — a mistyped field is reported by name rather than leaving the report quietly empty. `~/.dsh/profiles/web/cordis.patch.yml` is only needed when you want to override a price:
 
 ```yaml
 - insert:

@@ -125,6 +125,10 @@ assert(validate({}).value.maxRecords > 0, 'an empty config gets the default cap'
 assert(validate({ maxRecords: 50 }).value.maxRecords === 50, 'an explicit cap passes through')
 assert(validate({ maxRecords: 0 }).issues?.[0]?.path?.[0] === 'maxRecords', 'a zero cap is refused, naming the field')
 assert(validate({ maxRecords: 'lots' }).issues !== undefined, 'a non-numeric cap is refused')
+assert(validate(undefined).value.agentTool === true, 'a config-less row registers the agent tool')
+assert(validate({}).value.agentTool === true, 'an empty config registers the agent tool')
+assert(validate({ agentTool: false }).value.agentTool === false, 'agentTool: false passes through')
+assert(validate({ agentTool: 'no' }).issues?.[0]?.path?.[0] === 'agentTool', 'a non-boolean agentTool is refused, naming the field')
 assert(validate({ priceOverrides: { 'my-model': { inputPerM: 1, outputPerM: 2 } } }).issues === undefined,
   'a complete price override passes')
 const halfPrice = validate({ priceOverrides: { 'my-model': { inputPerM: 1 } } })

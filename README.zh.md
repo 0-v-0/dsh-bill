@@ -24,7 +24,7 @@ dsh plugin --profile web add dsh-bill
 - **报告** —— 会话内的「费用」标签页(与 Chat / Trajectory 并列):总费用、Token、缓存命中、高峰占比、月度预测、账户余额;按模型 / 会话 / 用途(含上下文压缩等循环开销)拆分;每日趋势与周 × 小时热力图。
 - **预算** —— 日 / 月 / 累计额度,超 80% 变黄,超支变红。
 - **多币种** —— 实时汇率,约 166 种货币;各模型基础单价按其官方定价货币显示。
-- **agent 工具** —— `bill_stats`,模型可直接回答花费相关的问题。
+- **agent 工具** —— `bill_stats`,模型可直接回答花费相关的问题。插件配置里 `agentTool: false` 则不注册它 —— 适合从不在会话里问花费、也不想每次请求都为它的 schema 付费的人。
 - 中英文跟随 DSH 语言设置;安装前的历史可从会话日志回填。
 
 ## 与同类插件的差异
@@ -85,7 +85,7 @@ dsh plugin --profile web add dsh-bill
 
 预算、预算货币、所有数字共用的显示货币,以及四处界面各自是否显示,都在设置里的「费用统计」页设定,存于 `$DSH_HOME/dsh-bill/prefs.json`。两种货币是两个独立设置:预算货币是那句承诺(「每月 100 元」),不随显示货币变动。(不走 DSH 自己的设置文档:它的 API 代理只向浏览器暴露一份固定的命名空间白名单,插件的命名空间在那里既读不到也写不了。)
 
-`maxRecords`(内存环形缓冲条数,默认 20000)与 `priceOverrides` 走插件配置,会在启动时校验 —— 写错的字段会指名报错,而不是让报告静静地空掉。`~/.dsh/profiles/web/cordis.patch.yml` 只在需要覆盖价格时才用得上:
+`maxRecords`(内存环形缓冲条数,默认 20000)、`agentTool`(是否注册 `bill_stats`,默认 `true`)与 `priceOverrides` 走插件配置,会在启动时校验 —— 写错的字段会指名报错,而不是让报告静静地空掉。`~/.dsh/profiles/web/cordis.patch.yml` 只在需要覆盖价格时才用得上:
 
 ```yaml
 - insert:

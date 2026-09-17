@@ -31,9 +31,9 @@ function assert(cond, msg) {
  * passed in to share that table between two boots, which is what a hot reload
  * does.
  */
-function boot(handle, registry = new Map()) {
+function boot(handle, registry = new Map(), config = {}) {
   const effects = []
-  const instance = { warnings: [], routes: [], registry }
+  const instance = { warnings: [], routes: [], registry, injected: [] }
   const services = {
     webServer: {
       register: (route) => {
@@ -56,7 +56,7 @@ function boot(handle, registry = new Map()) {
     },
     get: (name) => services[name],
     on: () => {},
-    inject: (names, apply) => { if (names.every((n) => services[n])) apply(ctx) },
+    inject: (names, apply) => { instance.injected.push(...names); if (names.every((n) => services[n])) apply(ctx) },
   }
   instance.effectFor = (label) => {
     const hit = effects.find((e) => e.label === label)
@@ -67,7 +67,7 @@ function boot(handle, registry = new Map()) {
   const warn = console.warn
   console.warn = (...args) => instance.warnings.push(args.join(' '))
   try {
-    plugin.apply(ctx, {})
+    plugin.apply(ctx, config)
   } finally {
     console.warn = warn
   }
@@ -145,6 +145,18 @@ console.log('a hot reload replaces the HTTP route instead of leaking it')
     assert(secondApi !== firstApi, 'the serving handler is the new generation, not the old one')
     assert(registry.size === 1, `the route table holds one /dsh-bill/api, not a leak (size ${registry.size})`)
   }
+}
+
+console.log('agentTool: false leaves bill_stats unregistered')
+// The tool list is the front of the prompt-cache prefix, so the only cache-safe
+// way to keep the schema off requests is to never ask for the registry at all.
+{
+  const withTool = boot(() => () => {})
+  assert(withTool.injected.includes('tools'), 'by default the plugin asks for the tool registry')
+  const without = boot(() => () => {}, new Map(), { agentTool: false })
+  assert(!without.injected.includes('tools'), 'with agentTool: false it never asks for the tool registry')
+  assert(without.routes.some((r) => r.path === '/dsh-bill/api'), 'the HTTP carrier is still mounted')
+  assert(without.warnings.length === 0, 'nothing is warned about')
 }
 
 console.log(failed === 0 ? '\nALL PASSED' : `\n${failed} FAILED`)
