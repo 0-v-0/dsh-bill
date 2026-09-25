@@ -52,6 +52,8 @@ globalThis.window = {
         // go through `react.runEffect`, inert until a test wants them.
         useState: (init) => [typeof init === 'function' ? init() : init, (v) => react.sets.push(v)],
         useEffect: (fn) => react.runEffect(fn),
+        useLayoutEffect: (fn) => react.runEffect(fn),
+        useRef: (init) => ({ current: init }),
         useMemo: (fn) => fn(),
         useCallback: (fn) => fn,
       }))
@@ -86,6 +88,9 @@ for (const key of [
   'conversation.view',
   'settings.section',
   'sidebar.footer.action',
+  'sidebar.session.row.hover',
+  'sidebar.panellist',
+  'main',
 ]) {
   assert(seatOf(key) !== undefined, 'registers into ' + key)
   assert(seats.includes(key), 'waits for ' + key + ' to be declared before registering')
@@ -100,11 +105,32 @@ const select = seatOf('conversation.chat.turnTail').select
 assert(select({ turn: { turn: 3, status: 'closed' }, seq: 9 })?.turn === 3, 'a closed turn elects, carrying its number')
 assert(select({ turn: { turn: 3, status: 'open' }, seq: 9 }) === null, 'an open turn declines')
 assert(select({}) === null, 'a missing turn declines rather than throwing')
+// DSH 0.1.7 re-declared the turn tail as a LIST: `id` required, `select`
+// rejected. Registering the chain shape there throws and fails the whole
+// client bundle, so the shape must follow the declared spec.
+{
+  const listed = []
+  exported.apply({
+    get: (name) => (name === 'slots'
+      ? {
+          inject: (key, effect) => effect(),
+          register: (options) => { listed.push(options); return () => {} },
+          spec: () => ({ kind: 'list' }),
+        }
+      : undefined),
+    effect: () => {},
+  })
+  const tail = listed.find((o) => o.name === 'conversation.chat.turnTail')
+  assert(typeof tail?.id === 'string' && tail.id.length > 0, 'a list-kind turn tail registers with an id')
+  assert(tail?.select === undefined, 'a list-kind turn tail carries no chain selector')
+}
 // List seats need a stable id; two entries sharing one id at the same priority
 // is a registration error, not a shadowing.
-for (const key of ['conversation.view', 'settings.section', 'sidebar.footer.action', 'conversation.composer.dock']) {
+for (const key of ['conversation.view', 'settings.section', 'sidebar.footer.action', 'conversation.composer.dock', 'sidebar.session.row.hover', 'sidebar.panellist']) {
   assert(typeof seatOf(key).id === 'string' && seatOf(key).id.length > 0, key + ' declares an id')
 }
+// The global panel is a keyed main entry, addressed by the icon's id.
+assert(seatOf('main')?.key === 'bill' && seatOf('sidebar.panellist')?.id === 'bill', 'the global panel and its sidebar icon share the id bill')
 // Labels are thunks so a language switch re-reads them without re-registering.
 assert(typeof seatOf('conversation.view').label === 'function', 'the view tab label is a thunk')
 assert(typeof seatOf('settings.section').label === 'function', 'the settings nav label is a thunk')
@@ -117,10 +143,12 @@ console.log('host transport')
 // (issue #1). The transport is module-private, so it is driven the way the
 // page drives it — through the dock component's effects.
 const calls = []
+const payloads = []
 let rpcMode = 'transport'
 const rpc = {
-  call: (channel, endpoint) => {
+  call: (channel, endpoint, payload) => {
     calls.push('rpc:' + endpoint)
+    payloads.push(payload)
     if (rpcMode === 'transport') return Promise.reject(new Error('transport failure for ' + channel + '/' + endpoint + ': HTTP 405'))
     if (rpcMode === 'handler') return Promise.resolve({ ok: false, error: { message: 'handler said no' } })
     return Promise.resolve({ ok: true, value: { via: 'rpc' } })
@@ -167,8 +195,8 @@ const answered = (sets) => sets.find((s) => s && s.loading === false)
 
 applyWithChannel()
 let sets = await renderDock()
-assert(calls.includes('rpc:overview'), 'the channel is tried first')
-assert(calls.indexOf('http:overview') > calls.indexOf('rpc:overview'), 'a transport failure falls back to POST /dsh-bill/api')
+assert(calls.includes('rpc:session-cost'), 'the channel is tried first')
+assert(calls.indexOf('http:session-cost') > calls.indexOf('rpc:session-cost'), 'a transport failure falls back to POST /dsh-bill/api')
 assert(answered(sets)?.data?.via === 'http', 'the HTTP answer is the one shown, not the 405')
 
 calls.length = 0
@@ -180,14 +208,14 @@ calls.length = 0
 rpcMode = 'handler'
 applyWithChannel()
 sets = await renderDock()
-assert(calls.includes('rpc:overview') && !calls.includes('http:overview'), 'a handler error is an answer, not a transport failure: no fallback')
+assert(calls.includes('rpc:session-cost') && !calls.includes('http:session-cost'), 'a handler error is an answer, not a transport failure: no fallback')
 assert(answered(sets)?.error === 'handler said no', 'the handler\'s message is what surfaces')
 
 calls.length = 0
 rpcMode = 'ok'
 applyWithChannel()
 sets = await renderDock()
-assert(answered(sets)?.data?.via === 'rpc' && !calls.includes('http:overview'), 'a working channel is used as before')
+assert(answered(sets)?.data?.via === 'rpc' && !calls.includes('http:session-cost'), 'a working channel is used as before')
 
 calls.length = 0
 rpcMode = 'transport'
@@ -197,8 +225,26 @@ sets = await renderDock()
 assert(/transport failure .*HTTP 405/.test(answered(sets)?.error ?? ''), 'with both carriers down, the transport error is the one reported')
 calls.length = 0
 sets = await renderDock()
-assert(calls.includes('rpc:overview'), 'a fallback that also failed does not demote the channel')
+assert(calls.includes('rpc:session-cost'), 'a fallback that also failed does not demote the channel')
 httpUp = true
+
+console.log('session hover card')
+// The hover card mounts one entry per open card, so it must ask for that one
+// session's fold — not the overview, which also totals every session.
+calls.length = 0
+payloads.length = 0
+rpcMode = 'ok'
+applyWithChannel()
+{
+  const cleanups = []
+  react.runEffect = (fn) => { const c = fn(); if (typeof c === 'function') cleanups.push(c) }
+  components['sidebar.session.row.hover']({ sessionId: 's9' })
+  await new Promise((r) => setTimeout(r, 0))
+  cleanups.forEach((c) => c())
+  react.runEffect = () => {}
+}
+assert(calls.length === 1 && calls[0] === 'rpc:session-cost', 'the hover card makes one session-cost call (got ' + calls.join(', ') + ')')
+assert(payloads[0]?.sessionId === 's9', 'the call is scoped to the hovered session')
 delete globalThis.fetch
 
 // Read the source once: several checks below are lints over what ships rather
