@@ -92,6 +92,17 @@ assert(typeof value.totalUsd === 'number', 'view carries a total')
 assert(value.turns.every((row) => row.usd === null || typeof row.usd === 'number'), 'each row prices or reports null')
 assert(value.priced === true && value.totalUsd > 0, 'a known model prices (got ' + value.totalUsd + ')')
 
+console.log('the unit carries the DSH 0.1.7 registry shape too')
+// 0.1.7 pushes a value to the browser only for a unit with `wire`, and parses
+// a checkpointed row through `stateSchema` before resuming from it. Missing
+// either, the per-turn line silently never renders.
+assert(unit.wire?.viewSchema.parse(unit.wire.view(multi)).calls === 3, 'wire.view is the same whole value')
+const roundTripped = JSON.parse(JSON.stringify(multi))
+assert(unit.stateSchema.parse(roundTripped) === roundTripped, 'a checkpointed state parses back')
+let rejected = false
+try { unit.stateSchema.parse({ turns: 'nope' }) } catch { rejected = true }
+assert(rejected, 'a malformed checkpoint is refused, so the host refolds from init')
+
 console.log('an unknown model reports unpriced rather than free')
 const unknown = fold([
   event('request/header', { header: { config: { provider: 'x', model: 'no-such-model-xyz' } }, reason: 'initial' }),
