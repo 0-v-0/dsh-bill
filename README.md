@@ -4,9 +4,11 @@ English | [中文](README.zh.md)
 
 Cost tracking for DSH (DeepSeek Harness). A line under each turn tells you what that turn cost; the conversation's **Cost** tab tells you what that session's money went on, and the global **Cost** panel beside Plugins does the same for the whole account.
 
-![Per-turn cost in the conversation](docs/in-chat.png)
+![This turn's cost under the reply, and the session's cost in the composer dock](docs/in-chat.png)
 
-![Cost attribution](docs/attribution.png)
+![The Cost panel: total, tokens, cache hit, balance and monthly forecast](docs/overview.png)
+
+![Cost attribution: what the money went on, by kind of content](docs/attribution.png)
 
 ## Install
 

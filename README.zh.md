@@ -4,9 +4,11 @@
 
 DSH(DeepSeek Harness)的费用统计插件。每轮对话下面看这轮花了多少,会话的「费用」标签页看这个会话的钱花在了什么上,侧边栏「插件」旁的全局「费用统计」面板看整个账户。
 
-![会话内的每轮成本](docs/in-chat.png)
+![回复下方是这轮的成本,输入框下方是本会话的费用](docs/in-chat.zh.png)
 
-![成本归因](docs/attribution.png)
+![费用统计面板:总费用、Token、缓存命中、账户余额与月度预测](docs/overview.zh.png)
+
+![成本归因:钱按内容类型花在了哪里](docs/attribution.zh.png)
 
 ## 安装
 
