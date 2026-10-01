@@ -120,7 +120,9 @@ assert(near(rolling.totalUsd,
   today.totalUsd + tomorrow.totalUsd + (lateInRolling ? yesterday.totalUsd : 0), 1e-3),
   'rolling money is exactly those calls, and not yesterday\'s morning')
 assert(rolling.calls > yesterday.calls, 'so rolling and yesterday are different answers to different questions')
-const rollingDays = rolling.timelineDays.map((d) => d.day).sort().join(',')
+// The window's days come back dense, so the quiet ones are dropped here: the
+// days that CARRY calls are what show which records the bound let in.
+const rollingDays = rolling.timelineDays.filter((d) => d.calls > 0).map((d) => d.day).sort().join(',')
 const expectedDays = [localDay(todayStart), localDay(tomorrowStart)]
   .concat(lateInRolling ? [localDay(yesterdayStart)] : []).sort().join(',')
 assert(rollingDays === expectedDays, 'the rolling window is bucketed by local day too (' + rollingDays + ')')

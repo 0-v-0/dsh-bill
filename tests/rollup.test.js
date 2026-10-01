@@ -181,10 +181,28 @@ await call(Date.now() - 60_000)
 const day = await ask({ action: 'dashboard', rangeDays: 1 }, reread.api)
 assert(day.calls === 1, 'only the call inside the last day is counted (got ' + day.calls + ')')
 assert(day.totalUsd > 0, 'the day carries its own cost, not the rollup\'s')
-assert(day.timelineDays.length === 1, 'the daily timeline has one bar (got ' + day.timelineDays.length + ')')
+// The last 24 hours touch two calendar days (one, exactly at midnight), and
+// both come back so the bars sit on their dates — but only one has a call.
+assert(day.timelineDays.length >= 1 && day.timelineDays.length <= 2,
+  'the daily timeline covers the days the window touches (got ' + day.timelineDays.length + ')')
+assert(day.timelineDays.filter((d) => d.calls > 0).length === 1, 'and only one of them has a call')
+// The bar carries its split by model, and the split is the whole of it.
+const busyDay = day.timelineDays.find((d) => d.calls > 0)
+const split = Object.values(busyDay.models || {}).reduce((a, b) => a + b, 0)
+assert(Object.keys(busyDay.models || {}).length === 1 && near(split, busyDay.usd, 1e-6),
+  'the day carries its cost split by model (got ' + JSON.stringify(busyDay.models) + ')')
 assert((day.byModel || []).length === 1, 'the model breakdown is scoped to the day too')
 const stillEverything = await ask({ action: 'dashboard', rangeDays: 0 }, reread.api)
 assert(stillEverything.calls === 31, 'all time still counts every call (got ' + stillEverything.calls + ')')
+// All time draws the archived days too: their totals are there, their split
+// is not, and the chart shows that difference as archived rather than guess.
+const archivedDays = stillEverything.timelineDays.filter((d) => d.usd > 0
+  && Object.values(d.models || {}).reduce((a, b) => a + b, 0) < d.usd - 1e-6)
+assert(archivedDays.length > 0, 'archived days come back with a total and no full split')
+// All time is dense between its first and last day: no date is skipped.
+const allKeys = stillEverything.timelineDays.map((d) => d.day)
+const span = Math.round((Date.parse(allKeys[allKeys.length - 1]) - Date.parse(allKeys[0])) / 86400000) + 1
+assert(allKeys.length === span, 'all time has a bar for every day it spans (' + allKeys.length + ' of ' + span + ')')
 
 console.log(failed === 0 ? '\nALL PASSED' : `\n${failed} FAILED`)
 process.exit(failed === 0 ? 0 : 1)

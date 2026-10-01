@@ -349,10 +349,62 @@ assert(/hint: sessionScope \? '' : totalHint/.test(source), 'a session total car
 // A window under a week has no rate worth extrapolating a month from.
 assert(/forecastable && fc && fc\.per30dUsd > 0/.test(source), 'the monthly estimate is gated on a long enough window')
 // A day or less is drawn from the hourly series the host already sends.
-assert(/hourly \? d\.timelineHours : d\.timelineDays/.test(source), 'a day or less is charted by the hour')
+assert(/hourly \? bucketHours\(d\.timelineHours/.test(source), 'a day or less is charted by the hour')
 // `type: 'label'` and `type: 'separator'` are the shipped Menu's grouping rows.
 assert(/type: 'label'/.test(source) && /type: 'separator'/.test(source),
   'the menu groups its rows the way the shipped Menu expects')
+
+console.log('timeline helpers')
+// The chart's arithmetic is module-private and pure, so it is lifted out of the
+// source and run here: the stub React discards the element tree, but bucketing,
+// stacking and scale are numbers, and numbers can be checked.
+const chartBlock = /\n    var SERIES_COLORS = [\s\S]*?\n(?=    \/\*\* The timeline's heading)/.exec(source)
+assert(chartBlock !== null, 'the chart helpers are one block')
+if (chartBlock) {
+  const lib = new Function('monthDay', 'modelLabel', chartBlock[0]
+    + '\nreturn { modelPalette, segmentsOf, granOf, bucketDays, bucketTitle, niceCeil }')(
+    (day) => String(day).slice(5), (row) => row.displayName || row.model)
+  const t = (key) => key
+
+  // Granularity follows the number of days, so a year is months, not slivers.
+  assert(lib.granOf(30) === 'day' && lib.granOf(90) === 'week' && lib.granOf(365) === 'month',
+    'a month is days, a quarter weeks, a year months')
+
+  // Weeks start on Monday and partial weeks sum only the days they hold.
+  // 2026-09-27 is a Sunday; 09-28 opens the next week.
+  const days = ['2026-09-26', '2026-09-27', '2026-09-28', '2026-09-29'].map((day, i) =>
+    ({ day, usd: i + 1, calls: 1, models: { 'p/a': i + 1 } }))
+  const weeks = lib.bucketDays(days, 'week')
+  assert(weeks.length === 2 && weeks[0].key === '2026-09-21' && weeks[1].key === '2026-09-28',
+    'weeks are keyed by their Monday (got ' + weeks.map((w) => w.key).join(',') + ')')
+  assert(weeks[0].usd === 3 && weeks[1].usd === 7 && weeks[1].models['p/a'] === 7,
+    'a week sums its days and their split')
+  assert(lib.bucketTitle(weeks[0], 'week') === '2026-09-26 – 09-27',
+    'a partial week is titled by the days it holds')
+  const months = lib.bucketDays(days, 'month')
+  assert(months.length === 1 && months[0].key === '2026-09' && months[0].calls === 4, 'months group by YYYY-MM')
+
+  // Colour follows the model: seven slots and grey "other" once there are nine.
+  const nine = Array.from({ length: 9 }, (_, i) => ({ provider: 'p', model: 'm' + i, usd: 9 - i }))
+  const pal = lib.modelPalette(nine, t)
+  assert(pal.slotted('p/m0') && pal.slotted('p/m6') && !pal.slotted('p/m7') && !pal.slotted('p/m8'),
+    'nine models keep seven colours and fold the rest')
+  assert(pal.colorOf('p/m0') !== pal.colorOf('p/m1'), 'slotted models get their own colours')
+  const eight = lib.modelPalette(nine.slice(0, 8), t)
+  assert(eight.slotted('p/m7'), 'exactly eight models all keep a colour')
+
+  // Segments: slotted models bottom up, the rest as other, the unsplit
+  // remainder of an archived day as archived — and rounding is not archived.
+  const segs = lib.segmentsOf({ usd: 10, models: { 'p/m0': 4, 'p/m8': 1 } }, pal)
+  assert(segs.map((x) => x.key + '=' + x.usd).join(',') === 'p/m0=4,other=1,archived=5',
+    'a bar splits into models, other, and archived (got ' + segs.map((x) => x.key + '=' + x.usd).join(',') + ')')
+  const rounded = lib.segmentsOf({ usd: 1.0000004, models: { 'p/m0': 1 } }, pal)
+  assert(rounded.length === 1, 'a rounding remainder is not drawn as archived')
+
+  // The scale tops out at a figure a person would write down.
+  assert(lib.niceCeil(0.73) === 0.8 && lib.niceCeil(1.3) === 1.5 && lib.niceCeil(10.4) === 15
+    && lib.niceCeil(41) === 50 && lib.niceCeil(0) === 1, 'the scale rounds up to a round step × 10ⁿ')
+}
 
 console.log('dictionaries')
 // The dictionaries are module-private, so their keys are read off the source.
