@@ -170,5 +170,21 @@ const after2 = await ask({ action: 'dashboard', rangeDays: 0 }, reread.api)
 assert(after2.calls === 30, 'restart counts 30, not 30 + the dead prefix (got ' + after2.calls + ')')
 assert(near(after2.totalUsd, before.totalUsd), 'the total is unchanged by the restart')
 
+console.log('a rolling 24-hour range is bounded to the last day')
+// A rolling window counts back from now, which is what the report's "Last 24
+// hours" asks for. Every record seeded above is weeks old, which makes the
+// bound visible: only a call made now may fall inside it, and the rollup must
+// stay out of it — a bounded window reports the ring, not the whole history.
+// (The calendar-day kind of window, which also has an end, is tests/window.)
+stream = reread.stream
+await call(Date.now() - 60_000)
+const day = await ask({ action: 'dashboard', rangeDays: 1 }, reread.api)
+assert(day.calls === 1, 'only the call inside the last day is counted (got ' + day.calls + ')')
+assert(day.totalUsd > 0, 'the day carries its own cost, not the rollup\'s')
+assert(day.timelineDays.length === 1, 'the daily timeline has one bar (got ' + day.timelineDays.length + ')')
+assert((day.byModel || []).length === 1, 'the model breakdown is scoped to the day too')
+const stillEverything = await ask({ action: 'dashboard', rangeDays: 0 }, reread.api)
+assert(stillEverything.calls === 31, 'all time still counts every call (got ' + stillEverything.calls + ')')
+
 console.log(failed === 0 ? '\nALL PASSED' : `\n${failed} FAILED`)
 process.exit(failed === 0 ? 0 : 1)

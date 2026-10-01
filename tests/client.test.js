@@ -301,6 +301,59 @@ const offRamp = steps.filter((s) => s !== 'family' && !RAMP.has(s))
 assert(steps.length > 0 && offRamp.length === 0,
   'every font token used is a published step' + (offRamp.length ? ': ' + offRamp.join(', ') : ''))
 
+console.log('range windows')
+// Rolling and calendar windows answer different questions, so the menu must
+// offer both, and the shortest rolling window must be named in hours: a rolling
+// day slides with the clock, and calling it "the last day" is exactly the
+// ambiguity the second group exists to remove. Read off the source because the
+// stub React above discards the element tree and the menu rows are data.
+const rangesTable = /var RANGES = \[([\s\S]*?)\n    \]/.exec(source)
+assert(rangesTable !== null, 'the windows are declared as one table')
+if (rangesTable) {
+  const rows = [...rangesTable[1].matchAll(/\{\s*id: '([^']+)',\s*group: '([^']+)',([^}]*)\}/g)]
+    .map((m) => ({ id: m[1], group: m[2], rest: m[3] }))
+  const ids = rows.map((r) => r.id)
+  assert(ids.length >= 6, 'the table lists the windows: ' + ids.join(', '))
+  assert(new Set(ids).size === ids.length, 'every window has its own id')
+  assert(rows.filter((r) => r.group === 'day').map((r) => r.id).join(',') === 'today,yesterday',
+    'the calendar group offers today and yesterday')
+  const rolling = rows.filter((r) => r.group === 'rolling')
+  assert(rolling.length > 0, 'rolling windows are offered')
+  // Every rolling window carries its length in days, because that is what the
+  // figures dividing by the window read. The 24-hour row is the one that also
+  // carries hours — how it is named, and what its hint quotes.
+  assert(rolling.every((r) => /days: [1-9]/.test(r.rest)),
+    'every rolling window declares a positive day count: ' + rolling.map((r) => r.id + '(' + r.rest.trim() + ')').join(', '))
+  assert(rolling.some((r) => /hours: 24/.test(r.rest)), 'the shortest rolling window is named in hours')
+  assert(rows.some((r) => r.group === 'all'), 'all time is still offered')
+}
+// A calendar window asks by name and a rolling one by count: sending the wrong
+// field would answer the other question without saying so.
+assert(/day: range\.day/.test(source) && /rangeDays: range\.days/.test(source),
+  'a calendar window asks by day, a rolling one by count')
+// The 24-hour window is the one row whose name is not a day count, so the name
+// has to be read before the all-time fallback no day count would take. The bug
+// this pins is real: without it the row renders as "All time" and asks for the
+// default window instead of its own.
+const labelBody = /function rangeLabel\(t, range\) \{([\s\S]*?)\n    \}/.exec(source)
+assert(labelBody !== null, 'rangeLabel is the one place a window is named')
+if (labelBody) {
+  const hours = labelBody[1].indexOf('range.hours')
+  const allTime = labelBody[1].indexOf("t('range.all')")
+  assert(hours >= 0 && allTime >= 0 && hours < allTime,
+    'hours are read before the all-time fallback a dayless window would take')
+}
+// A session's tab has no window and no forecast, so its total carries no hint:
+// the fallback "rate" there is the total divided by one, said twice.
+assert(/hint: sessionScope \? '' : totalHint/.test(source), 'a session total carries no window hint')
+// A window under a week has no rate worth extrapolating a month from.
+assert(/forecastable && fc && fc\.per30dUsd > 0/.test(source), 'the monthly estimate is gated on a long enough window')
+// A day or less is drawn from the hourly series the host already sends.
+assert(/hourly \? d\.timelineHours : d\.timelineDays/.test(source), 'a day or less is charted by the hour')
+// `type: 'label'` and `type: 'separator'` are the shipped Menu's grouping rows.
+assert(/type: 'label'/.test(source) && /type: 'separator'/.test(source),
+  'the menu groups its rows the way the shipped Menu expects')
+
 console.log('dictionaries')
 // The dictionaries are module-private, so their keys are read off the source.
 function dictKeys(name) {
@@ -321,6 +374,27 @@ if (zh && en) {
   // would take the whole page down; catching it here is strictly cheaper.
   assert(missingEn.length === 0, 'every zh key has an en translation' + (missingEn.length ? ': missing ' + missingEn.join(', ') : ''))
   assert(missingZh.length === 0, 'every en key has a zh translation' + (missingZh.length ? ': missing ' + missingZh.join(', ') : ''))
+  // A window measured in hours needs its own wording in both dictionaries —
+  // English would otherwise read "24 days" — and a key the code names but the
+  // dictionary lacks renders as its own name, so presence is worth asserting.
+  for (const key of ['kpi.totalHint.hours', 'kpi.forecastHint.b.one']) {
+    assert(zh.has(key) && en.has(key), 'both dictionaries carry ' + key)
+  }
+  // A key the source names but neither dictionary carries renders as its own
+  // name — "1kpi.totalHint.one · ¥1.91" in the report — and a key renamed on
+  // one side only is the easy mistake. Read off the keys of every `t(...)`
+  // call whose argument is literal; a ternary picks one of two, so both are
+  // read. An argument built by concatenation ('surfaces.' + key) is not a key
+  // and is skipped — the parity check above already covers its parts.
+  const named = new Set()
+  for (const call of source.matchAll(/\bt\(([^)]*)\)/g)) {
+    if (call[1].includes('+')) continue
+    for (const literal of call[1].matchAll(/'([^']+)'/g)) named.add(literal[1])
+  }
+  const unknown = [...named].filter((k) => !zh.has(k) || !en.has(k))
+  assert(named.size > 30, 'the source names ' + named.size + ' literal keys')
+  assert(unknown.length === 0, 'every key the source names is translated in both dictionaries'
+    + (unknown.length ? ': ' + unknown.join(', ') : ''))
 }
 
 console.log('dictionary values are literals')
