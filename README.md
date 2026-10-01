@@ -8,6 +8,8 @@ Cost tracking for DSH (DeepSeek Harness). A line under each turn tells you what 
 
 ![The Cost panel: total, tokens, cache hit, balance and monthly forecast](docs/overview.png)
 
+![Spend over time, stacked by model, with each bar's split on hover; below it, the weekday × hour heatmap](docs/timeline.png)
+
 ![Cost attribution: what the money went on, by kind of content](docs/attribution.png)
 
 ## Install
@@ -23,10 +25,10 @@ Restart `dsh web` to pick it up.
 - **Cost attribution** — the bill split by kind of content: tool output, model output, system prompt, terminal commands (grouped by `git` / `pnpm` / `rg`), tool input, attachments, system reminders, user input. The sunburst drills in.
 - **Per-turn cost** — one line under every finished turn: what it cost, how many steps, the cache-hit rate. It reads the session log itself, so turns from before you installed the plugin are covered too.
 - **Always on screen** — this session's cost as a pill beside the shipped stats in the composer dock, today's spend against the budget in the sidebar, and each session's cost in its sidebar hover card (DSH 0.1.7+). The dock's figure moves while a turn is still running, from the output that has streamed so far, and becomes the billed figure the moment the provider reports it. Each of the five surfaces can be turned off individually in settings.
-- **Report** — a **Cost** tab in each conversation (beside Chat and Trajectory) scoped to that session, and an account-wide **Cost** panel opened from the sidebar icon beside Plugins (DSH 0.1.7+): total, tokens, cache hit, peak share; account-wide also monthly forecast, account balance, budget and a per-session split; broken down by model and by purpose (including loop overhead such as context compaction); a daily trend and a weekday × hour heatmap.
+- **Report** — a **Cost** tab in each conversation (beside Chat and Trajectory) scoped to that session, and an account-wide **Cost** panel opened from the sidebar icon beside Plugins (DSH 0.1.7+): total, tokens, cache hit, peak share; account-wide also monthly forecast, account balance, budget and a per-session split; broken down by model and by purpose (including loop overhead such as context compaction); spend over time stacked by model, with each bar's split on hover; a weekday × hour heatmap. The window is either rolling (the last 24 hours, 7, 30, 90 or 365 days) or a calendar day (today, yesterday) on the host's clock, plus all time; bars are hours for a day or less, then days, weeks or months as the window grows.
 - **Budget** — a daily / monthly / all-time limit that turns amber past 80% and red when you go over.
 - **Multi-currency** — live rates for ~166 currencies; each model's base rate is shown in the currency its vendor prices it in.
-- **Agent tool** — `bill_stats`, so the model can answer questions about spend directly. `agentTool: false` in the plugin config leaves it unregistered, for anyone who never asks the model about spend and would rather not pay its schema on every request.
+- **Agent tool** — `bill_stats`, so the model can answer questions about spend directly, over a number of days back or one calendar day (`today`, `yesterday`, `YYYY-MM-DD`). `agentTool: false` in the plugin config leaves it unregistered, for anyone who never asks the model about spend and would rather not pay its schema on every request.
 - English and Chinese follow the DSH language setting; history from before the install is backfilled from the session log.
 
 ## How it differs from similar plugins
