@@ -9,7 +9,7 @@
  * Run: node tests/projection.test.js
  */
 import plugin, { Config } from '../lib/index.js'
-import { billTurnsProjection as unit } from '../lib/projection.js'
+import { billLiveProjection as live, billTurnsProjection as unit } from '../lib/projection.js'
 
 let failed = 0
 function assert(cond, msg) {
@@ -23,6 +23,10 @@ const usage = (input, output, read = 0, write = 0) => ({
   inputTokens: input, outputTokens: output, cacheReadTokens: read, cacheWriteTokens: write,
 })
 const fold = (events) => events.reduce((state, ev) => unit.apply(state, ev), unit.init())
+const foldLive = (events) => events.reduce((state, ev) => live.apply(state, ev), live.init())
+/** One text fragment per entry, streamed for one attempt. */
+const stream = (turn, step, texts) => texts.map((text) =>
+  event('assistant/chunk', { turn, step, chunk: { type: 'text-delta', text } }))
 
 const HEADER = event('request/header', {
   header: { config: { provider: 'deepseek-official', model: 'deepseek-chat' } },
@@ -111,6 +115,102 @@ const unknown = fold([
 const unknownView = unit.view(unknown)
 assert(unknownView.turns[0].usd === null, 'the row is null, not 0')
 assert(unknownView.priced === false, 'the whole value is flagged unpriced')
+
+console.log('the open step is estimated from what has actually streamed')
+// 100 characters of output, published at the 64-character quantum and priced
+// at the harness's own four-characters-per-token density.
+const openEvents = [
+  HEADER,
+  event('step/start', { turn: 0, step: 0 }),
+  ...stream(0, 0, ['x'.repeat(100)]),
+]
+const open = foldLive(openEvents)
+const estimate = live.wire.viewSchema.parse(live.view(open))
+assert(estimate !== null && estimate.turn === 0 && estimate.step === 0, 'the estimate names its attempt')
+assert(estimate.outputTokens === 16, 'published characters over four (got ' + estimate.outputTokens + ')')
+// The same output tokens through the exact path cost the same, because both go
+// through `priceRecord` at the same instant — so peak/off-peak and the
+// catalogue cannot make the estimate and the bill disagree.
+const sameTokens = unit.view(fold([
+  HEADER,
+  event('assistant/message', { turn: 0, step: 0, message: {}, usage: usage(0, 16) }),
+]))
+assert(estimate.usd > 0 && Math.abs(estimate.usd - sameTokens.totalUsd) <= Math.abs(estimate.usd) * 1e-9,
+  'the estimate prices like a settled call of the same output (got ' + estimate.usd + ' vs ' + sameTokens.totalUsd + ')')
+
+console.log('the estimate is replaced by the settled figure, never added to it')
+// A turn whose stream was observed and one whose stream was not must bill the
+// same: the estimate is a view of work in progress, not a second ledger.
+const settledEvents = [
+  ...openEvents,
+  event('assistant/message', { turn: 0, step: 0, message: {}, usage: usage(1000, 120) }),
+]
+const streamed = settledEvents.reduce((state, ev) => unit.apply(state, ev), unit.init())
+const plain = fold([
+  HEADER,
+  event('assistant/message', { turn: 0, step: 0, message: {}, usage: usage(1000, 120) }),
+])
+assert(unit.view(streamed).totalUsd === unit.view(plain).totalUsd, 'the estimate never entered the total')
+assert(unit.view(streamed).settled.turn === 0 && unit.view(streamed).settled.step === 0,
+  'the value names the attempt whose usage landed')
+assert(unit.view(plain).settled !== null && unit.view(plain).settled.step === 0, 'and it is derived from usage alone')
+assert(unit.view(unit.init()).settled === null, 'an empty log has settled nothing')
+assert(live.view(foldLive(settledEvents)) === null, 'the estimate is gone the moment the attempt settles')
+assert(live.view(live.apply(foldLive(openEvents), event('step/end', { turn: 0, step: 0 }))) === null,
+  'a step that ends without a message clears it too')
+
+console.log('publication is quantized, so one fragment is not one frame')
+const below = foldLive([HEADER, event('step/start', { turn: 0, step: 0 }), ...stream(0, 0, ['z'.repeat(63)])])
+assert(live.view(below) === null, 'a fragment under the quantum publishes nothing')
+const at = live.apply(below, stream(0, 0, ['z'])[0])
+const published = live.view(at)
+assert(published !== null && published.outputTokens === 16, 'crossing the quantum publishes the estimate')
+assert(live.view(live.apply(at, stream(0, 0, ['z'])[0])) === published,
+  'a fragment that does not cross the next quantum reuses the published value')
+
+console.log('a retry estimates the new attempt, not both')
+const retried = foldLive([
+  HEADER,
+  event('step/start', { turn: 0, step: 0 }),
+  ...stream(0, 0, ['a'.repeat(200)]),
+  event('llm/retry-started', { turn: 0, step: 0 }),
+  ...stream(0, 0, ['b'.repeat(64)]),
+])
+assert(live.view(retried).outputTokens === 16,
+  'only the surviving attempt is counted (got ' + live.view(retried).outputTokens + ')')
+
+console.log('an unpriced model estimates nothing rather than zero')
+const unpriced = foldLive([
+  event('request/header', { header: { config: { provider: 'x', model: 'no-such-model-xyz' } } }),
+  event('step/start', { turn: 0, step: 0 }),
+  ...stream(0, 0, ['c'.repeat(200)]),
+])
+assert(live.view(unpriced).usd === null, 'the estimate is null, not 0')
+
+console.log('non-output events leave the live unit alone')
+const idle = foldLive([HEADER, event('step/start', { turn: 0, step: 0 })])
+assert(live.apply(idle, event('tool/call', { turn: 0, step: 0, callId: 'c', name: 'bash', arguments: '{}' })) === idle,
+  'a tool call is not streamed output')
+assert(live.apply(idle, event('assistant/chunk', { turn: 0, step: 0, chunk: { type: 'usage', usage: usage(1, 1) } })) === idle,
+  'a usage fragment is not streamed output')
+
+console.log('the live unit carries the registry shape too')
+assert(live.wire?.viewSchema.parse(null) === null, 'no attempt streaming is a valid value')
+assert(live.wire.viewSchema.parse(live.view(at)).turn === 0, 'wire.view is the same value')
+const closedLive = live.init()
+assert(live.stateSchema.parse(closedLive) === closedLive, 'a closed checkpoint parses back as itself')
+// A checkpoint outlives the process that watched the stream, so an attempt
+// restored from one is cleared rather than served: an estimate nobody can
+// settle must not reach the screen.
+const restoredLive = live.stateSchema.parse(JSON.parse(JSON.stringify(at)))
+assert(restoredLive.turn === null && restoredLive.chars === 0, 'a checkpointed attempt is cleared on restore')
+assert(live.view(restoredLive) === null, 'and it serves no estimate')
+let liveRejected = false
+try { live.stateSchema.parse({ chars: 'nope' }) } catch { liveRejected = true }
+assert(liveRejected, 'a malformed checkpoint is refused, so the host refolds from init')
+let liveValueRejected = false
+try { live.wire.viewSchema.parse({ turn: 0, step: 0, outputTokens: 16 }) } catch { liveValueRejected = true }
+assert(liveValueRejected, 'a value missing its amount is refused')
 
 console.log('repricing is cached on row identity')
 // view() runs on every read AND every change, and apply() replaces exactly one
