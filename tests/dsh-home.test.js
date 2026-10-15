@@ -9,8 +9,8 @@
  *  - two instances in one process, each with its own `dshHome`, keep their
  *    preferences apart, and neither writes under `$DSH_HOME`;
  *  - the schema accepts a path and refuses a blank or non-string one;
- *  - a configured path is spelled as the harness spells it (`~` is the OS home,
- *    a relative path is resolved), and without one `$DSH_HOME` still applies.
+ *  - whichever path wins — the configured one or `$DSH_HOME` — is spelled as
+ *    the harness spells it (`~` is the OS home, a relative path is resolved).
  *
  * Run: node tests/dsh-home.test.js
  */
@@ -97,6 +97,9 @@ assert(resolveDshHome('homes/alice') === path.resolve('homes/alice'), 'a relativ
 assert(resolveDshHome() === SHARED, 'without one, $DSH_HOME applies')
 process.env.DSH_HOME = '  '
 assert(resolveDshHome() === path.join(os.homedir(), '.dsh'), 'and a blank $DSH_HOME falls back to ~/.dsh')
+assert(resolveDshHome(undefined, { DSH_HOME: '~/.dsh-env' }) === path.join(os.homedir(), '.dsh-env'),
+  'a $DSH_HOME of ~/... is under the OS home too, as the harness reads it')
+assert(resolveDshHome(undefined, { DSH_HOME: 'homes/env' }) === path.resolve('homes/env'), 'and a relative $DSH_HOME is resolved')
 
 fs.rmSync(ROOT, { recursive: true, force: true })
 
