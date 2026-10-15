@@ -10,7 +10,9 @@
  *    preferences apart, and neither writes under `$DSH_HOME`;
  *  - the schema accepts a path and refuses a blank or non-string one;
  *  - whichever path wins — the configured one or `$DSH_HOME` — is spelled as
- *    the harness spells it (`~` is the OS home, a relative path is resolved).
+ *    the harness spells it (`~` is the OS home, a relative path is resolved);
+ *  - `priceOverrides` and `rateCurrency` are each instance's own too: one
+ *    instance's config never prices another's calls.
  *
  * Run: node tests/dsh-home.test.js
  */
@@ -27,6 +29,8 @@ process.env.DSH_HOME = SHARED
 
 const { default: plugin, Config } = await import('../lib/index.js')
 const { resolveDshHome } = await import('../lib/hostkit.js')
+const { createPricing, priceRecord } = await import('../lib/pricing.js')
+const { createProjections } = await import('../lib/projection.js')
 
 let failed = 0
 function assert(cond, msg) {
@@ -100,6 +104,34 @@ assert(resolveDshHome() === path.join(os.homedir(), '.dsh'), 'and a blank $DSH_H
 assert(resolveDshHome(undefined, { DSH_HOME: '~/.dsh-env' }) === path.join(os.homedir(), '.dsh-env'),
   'a $DSH_HOME of ~/... is under the OS home too, as the harness reads it')
 assert(resolveDshHome(undefined, { DSH_HOME: 'homes/env' }) === path.resolve('homes/env'), 'and a relative $DSH_HOME is resolved')
+
+console.log('each instance prices by its own config')
+const MODEL = 'acme/home-test-1'
+const call = { model: MODEL, time: Date.now(), inputTokens: 1e6, outputTokens: 1e6 }
+const alicePricing = createPricing({ overrides: { [MODEL]: { inputPerM: 1, outputPerM: 1 } }, rateCurrency: 'EUR' })
+const bobPricing = createPricing({ overrides: { [MODEL]: { inputPerM: 2, outputPerM: 2 } } })
+assert(alicePricing.priceRecord(call).usd === 2, "alice's override prices her call (got " + alicePricing.priceRecord(call).usd + ')')
+assert(bobPricing.priceRecord(call).usd === 4, "bob's override prices his, after hers was built (got " + bobPricing.priceRecord(call).usd + ')')
+assert(alicePricing.currencyFor('deepseek-chat') === 'EUR' && bobPricing.currencyFor('deepseek-chat') === 'CNY',
+  "alice's rateCurrency is not bob's")
+assert(priceRecord(call).priced === false, 'neither reached the module-level pricing')
+assert(createPricing({ overrides: { [MODEL]: { inputPerM: 1, outputPerM: 1 } } }).catalog === alicePricing.catalog,
+  'the same overrides share one catalogue')
+assert(createPricing().catalog !== alicePricing.catalog, 'and no overrides is a catalogue of its own')
+
+const turnsOf = (pricing) => createProjections(pricing.priceRecord).billTurnsProjection
+const events = [
+  { type: 'request/header', seq: 0, time: call.time, data: { header: { config: { provider: 'acme', model: MODEL } }, reason: 'initial' } },
+  { type: 'assistant/message', seq: 1, time: call.time, data: { turn: 0, step: 0, message: {}, usage: { inputTokens: 1e6, outputTokens: 1e6 } } },
+]
+const fold = (unit) => unit.view(events.reduce((state, ev) => unit.apply(state, ev), unit.init()))
+const aliceTurns = turnsOf(alicePricing)
+const bobTurns = turnsOf(bobPricing)
+assert(fold(aliceTurns).totalUsd === 2 && fold(bobTurns).totalUsd === 4, 'a session projection prices by its own instance')
+assert(fold(aliceTurns).totalUsd === 2, "and alice's memo still holds her price after bob's view")
+
+boot({ dshHome: ALICE, priceOverrides: { [MODEL]: { inputPerM: 3, outputPerM: 3 } }, rateCurrency: 'JPY' })
+assert(priceRecord(call).priced === false, "a booted instance's config leaves the module-level pricing alone")
 
 fs.rmSync(ROOT, { recursive: true, force: true })
 
