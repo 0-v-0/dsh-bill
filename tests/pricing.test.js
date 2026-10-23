@@ -75,6 +75,19 @@ assert(Math.abs(perM(satAfter).usd - 0.22) < 1e-6, '... and is billed at the off
 assert(peakStateFor('deepseek-v4-flash', sunAfter) === 'offpeak', 'a peak-hour Sunday after the change is off-peak')
 assert(Math.abs(perM(sunAfter).usd - 0.22) < 1e-6, '... and is billed at the off-peak rate')
 
+// `deepseek-flash` (V4.1 Flash 1017) once had no first-party schedule and
+// priced every hour at the off-peak rate (issue #31).
+console.log('deepseek-flash peak / off-peak, holidays')
+const flashPerM = (time) => priceRecord(rec('deepseek-flash', time, { inputTokens: 1e6 }))
+const flashPeak = Date.UTC(2026, 9, 23, 2) // Friday, inside 01-04 UTC
+const flashOff = Date.UTC(2026, 9, 23, 12)
+const nationalDay = Date.UTC(2026, 9, 1, 2) // Thursday, a public holiday
+assert(peakStateFor('deepseek-flash', flashPeak) === 'peak', 'a weekday peak hour is peak')
+assert(Math.abs(flashPerM(flashPeak).usd - 0.3) < 1e-6, '... and is billed at the peak rate')
+assert(Math.abs(flashPerM(flashOff).usd - 0.15) < 1e-6, 'an off-peak hour is billed at the off-peak rate')
+assert(peakStateFor('deepseek-flash', nationalDay) === 'offpeak', 'a public holiday is off-peak all day')
+assert(Math.abs(flashPerM(nationalDay).usd - 0.15) < 1e-6, '... and is billed at the off-peak rate')
+
 console.log('native currency')
 assert(currencyFor('deepseek-v4-flash') === 'CNY', 'deepseek prices in CNY')
 assert(currencyFor('gpt-5') === 'USD', 'gpt-5 prices in USD')

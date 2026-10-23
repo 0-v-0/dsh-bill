@@ -39,7 +39,7 @@
     "node": ">=20"
   },
   "dependencies": {
-    "llm-pricing": "^0.18.0"
+    "llm-pricing": "^0.20.0"
   },
   "dsh": {
     "bundle": {
